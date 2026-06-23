@@ -1,0 +1,16 @@
+services:
+  etcdpilot:
+    build: .
+    container_name: etcdpilot
+    environment:
+      - ETCD_MANAGER_CONFIG=/etc/etcdpilot/config.toml
+      - ETCD_MANAGER_SESSION_SECRET=change-me-for-compose
+    volumes:
+      - ./config.toml:/etc/etcdpilot/config.toml:ro
+      - etcdpilot-data:/var/lib/etcdpilot
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+volumes:
+  etcdpilot-data:

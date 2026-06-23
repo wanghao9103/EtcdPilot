@@ -1,0 +1,19 @@
+[server]
+addr = "0.0.0.0:8080"
+
+[database]
+url = "sqlite://data/etcdpilot.db"
+
+[security]
+session_secret_env = "ETCD_MANAGER_SESSION_SECRET"
+cookie_secure = false
+session_ttl_seconds = 3600
+
+[web]
+dist_dir = "web/dist"
+
+[[clusters]]
+id = "demo"
+name = "Demo Local"
+endpoints = ["http://127.0.0.1:2379"]
+readonly = true

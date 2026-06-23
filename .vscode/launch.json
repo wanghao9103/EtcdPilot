@@ -1,0 +1,62 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "EtcdPilot: Backend (Rust)",
+      "type": "cppvsdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/backend/target/debug/etcdpilot-backend.exe",
+      "args": [],
+      "cwd": "${workspaceFolder}/backend",
+      "console": "integratedTerminal",
+      "env": {
+        "ETCD_MANAGER_CONFIG": "${workspaceFolder}/config.toml",
+        "ETCD_MANAGER_SESSION_SECRET": "etcdpilot-local-session-secret"
+      },
+      "preLaunchTask": "backend: predebug (build web + build backend)",
+      "symbolSearchPath": "${workspaceFolder}/backend/target/debug"
+    },
+    {
+      "name": "EtcdPilot: Frontend (Vite)",
+      "type": "pwa-node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}/frontend",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev",
+        "--",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "5173"
+      ],
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**"]
+    },
+    {
+      "name": "EtcdPilot: Frontend Browser",
+      "type": "pwa-chrome",
+      "request": "launch",
+      "url": "http://127.0.0.1:5173/",
+      "webRoot": "${workspaceFolder}/frontend",
+      "sourceMaps": true,
+      "userDataDir": false,
+      "sourceMapPathOverrides": {
+        "webpack:///./*": "${webRoot}/*",
+        "webpack:///*": "*"
+      }
+    }
+  ],
+  "compounds": [
+    {
+      "name": "EtcdPilot: All (Backend + Frontend)",
+      "configurations": [
+        "EtcdPilot: Backend (Rust)",
+        "EtcdPilot: Frontend (Vite)",
+        "EtcdPilot: Frontend Browser"
+      ],
+      "stopAll": true
+    }
+  ]
+}

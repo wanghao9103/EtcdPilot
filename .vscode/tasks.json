@@ -1,0 +1,96 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "web: sync to backend",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/scripts/sync-web.ps1",
+        "-SkipInstall"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "backend: predebug (build web + build backend)",
+      "dependsOn": [
+        "web: sync to backend",
+        "backend: build"
+      ],
+      "dependsOrder": "sequence",
+      "problemMatcher": []
+    },
+    {
+      "label": "backend: build",
+      "type": "shell",
+      "command": "cargo build",
+      "options": {
+        "cwd": "${workspaceFolder}/backend"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "backend: run",
+      "type": "shell",
+      "command": "cargo run",
+      "isBackground": true,
+      "options": {
+        "cwd": "${workspaceFolder}/backend",
+        "env": {
+          "ETCD_MANAGER_CONFIG": "${workspaceFolder}/config.toml",
+          "ETCD_MANAGER_SESSION_SECRET": "etcdpilot-local-session-secret"
+        }
+      },
+      "problemMatcher": [
+        {
+          "owner": "rust",
+          "pattern": {
+            "regexp": "^\\s*$"
+          },
+          "background": {
+            "activeOnStart": true,
+            "beginsPattern": "listening on",
+            "endsPattern": "."
+          }
+        }
+      ],
+      "group": "build"
+    },
+    {
+      "label": "frontend: dev",
+      "type": "shell",
+      "command": "npm run dev -- --host 127.0.0.1 --port 5173",
+      "isBackground": true,
+      "options": {
+        "cwd": "${workspaceFolder}/frontend"
+      },
+      "problemMatcher": [
+        {
+          "owner": "frontend",
+          "pattern": {
+            "regexp": "^\\s*$"
+          },
+          "background": {
+            "activeOnStart": true,
+            "beginsPattern": "Local:",
+            "endsPattern": "."
+          }
+        }
+      ],
+      "group": "build"
+    },
+    {
+      "label": "dev: all",
+      "dependsOn": [
+        "backend: run",
+        "frontend: dev"
+      ],
+      "dependsOrder": "parallel",
+      "problemMatcher": []
+    }
+  ]
+}
