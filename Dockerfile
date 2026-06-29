@@ -16,7 +16,7 @@ FROM debian:bookworm-slim
 WORKDIR /app
 COPY --from=backend-build /usr/src/app/target/release/etcdpilot-backend /app/etcdpilot
 COPY --from=web-build /usr/src/app/frontend/dist /app/web/dist
-COPY config.toml /etc/etcdpilot/config.toml
+COPY config/config.prod.toml /etc/etcdpilot/config.toml
 RUN mkdir -p /var/lib/etcdpilot /app/web/dist
 ENV ETCD_MANAGER_CONFIG=/etc/etcdpilot/config.toml
 EXPOSE 8080

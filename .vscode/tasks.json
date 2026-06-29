@@ -34,15 +34,42 @@
       "problemMatcher": []
     },
     {
-      "label": "backend: run",
+      "label": "backend: run test",
       "type": "shell",
       "command": "cargo run",
       "isBackground": true,
       "options": {
         "cwd": "${workspaceFolder}/backend",
         "env": {
-          "ETCD_MANAGER_CONFIG": "${workspaceFolder}/config.toml",
+          "ETCD_MANAGER_CONFIG": "${workspaceFolder}/config/config.test.toml",
           "ETCD_MANAGER_SESSION_SECRET": "etcdpilot-local-session-secret"
+        }
+      },
+      "problemMatcher": [
+        {
+          "owner": "rust",
+          "pattern": {
+            "regexp": "^\\s*$"
+          },
+          "background": {
+            "activeOnStart": true,
+            "beginsPattern": "listening on",
+            "endsPattern": "."
+          }
+        }
+      ],
+      "group": "build"
+    },
+    {
+      "label": "backend: run prod",
+      "type": "shell",
+      "command": "cargo run",
+      "isBackground": true,
+      "options": {
+        "cwd": "${workspaceFolder}/backend",
+        "env": {
+          "ETCD_MANAGER_CONFIG": "${workspaceFolder}/config/config.prod.toml",
+          "ETCD_MANAGER_SESSION_SECRET": "change-me-before-prod-run"
         }
       },
       "problemMatcher": [
@@ -86,7 +113,7 @@
     {
       "label": "dev: all",
       "dependsOn": [
-        "backend: run",
+        "backend: run test",
         "frontend: dev"
       ],
       "dependsOrder": "parallel",

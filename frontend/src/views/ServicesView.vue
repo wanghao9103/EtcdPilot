@@ -11,6 +11,29 @@
       </button>
     </div>
 
+    <div class="view-switch" role="tablist" :aria-label="t('services.viewMode')">
+      <button
+        type="button"
+        class="view-switch-btn"
+        :class="{ active: viewMode === 'topology' }"
+        role="tab"
+        :aria-selected="viewMode === 'topology'"
+        @click="viewMode = 'topology'"
+      >
+        {{ t('services.topology') }}
+      </button>
+      <button
+        type="button"
+        class="view-switch-btn"
+        :class="{ active: viewMode === 'list' }"
+        role="tab"
+        :aria-selected="viewMode === 'list'"
+        @click="viewMode = 'list'"
+      >
+        {{ t('services.list') }}
+      </button>
+    </div>
+
     <div class="filter-bar">
       <label class="filter-item">
         <span>{{ t('services.env') }}</span>
@@ -59,7 +82,151 @@
       </article>
     </div>
 
-    <div class="service-list">
+    <div v-if="viewMode === 'topology'" class="topology-layout">
+      <section class="topology-map" :aria-label="t('services.topology')">
+        <div v-if="topologyClusters.length" class="topology-clusters">
+          <div class="topology-tools" aria-hidden="true">
+            <span>Fit</span>
+            <span>+</span>
+            <span>-</span>
+          </div>
+          <div class="topology-lanes" aria-hidden="true">
+            <span>{{ t('services.clusterNode') }}</span>
+            <span>{{ t('services.serviceNode') }}</span>
+            <span>{{ t('services.instanceNode') }}</span>
+          </div>
+          <article v-for="cluster in topologyClusters" :key="cluster.id" class="topology-cluster">
+            <button
+              type="button"
+              class="topology-node cluster-node"
+              :class="{ selected: selectedTopologyNode?.id === cluster.id }"
+              @click.stop="selectTopologyNode(cluster, $event)"
+              @mouseenter="showTopologyTooltip(cluster, $event)"
+              @mousemove="moveTopologyTooltip"
+              @mouseleave="hideTopologyTooltip"
+              @focus="showTopologyTooltip(cluster, $event)"
+              @blur="hideTopologyTooltip"
+            >
+              <span class="node-icon cluster-icon" aria-hidden="true"></span>
+              <span class="node-health online" aria-hidden="true"></span>
+              <span class="node-body">
+                <span class="node-kicker">{{ t('services.clusterNode') }}</span>
+                <strong>{{ cluster.label }}</strong>
+                <span>{{ t('services.serviceSummary', { services: cluster.services.length, instances: cluster.instanceCount }) }}</span>
+              </span>
+            </button>
+
+            <div class="topology-services">
+              <article v-for="service in cluster.services" :key="service.id" class="topology-service">
+                <button
+                  type="button"
+                  class="topology-node service-node"
+                  :class="{ selected: selectedTopologyNode?.id === service.id }"
+                  @click.stop="selectTopologyNode(service, $event)"
+                  @mouseenter="showTopologyTooltip(service, $event)"
+                  @mousemove="moveTopologyTooltip"
+                  @mouseleave="hideTopologyTooltip"
+                  @focus="showTopologyTooltip(service, $event)"
+                  @blur="hideTopologyTooltip"
+                >
+                  <span class="node-icon service-icon" aria-hidden="true"></span>
+                  <span
+                    class="node-health"
+                    :class="service.reachableCount === service.instances.length ? 'online' : 'offline'"
+                    aria-hidden="true"
+                  ></span>
+                  <span class="node-body">
+                    <span class="node-kicker">{{ t('services.serviceNode') }}</span>
+                    <strong>{{ service.label }}</strong>
+                    <span>{{ t('services.instanceSummary', { count: service.instances.length, reachable: service.reachableCount }) }}</span>
+                  </span>
+                </button>
+
+                <div class="topology-instances">
+                  <button
+                    v-for="instance in service.instances"
+                    :key="instance.id"
+                    type="button"
+                    class="topology-node instance-node"
+                    :class="[instance.status, { selected: selectedTopologyNode?.id === instance.id }]"
+                    @click.stop="selectTopologyNode(instance, $event)"
+                    @mouseenter="showTopologyTooltip(instance, $event)"
+                    @mousemove="moveTopologyTooltip"
+                    @mouseleave="hideTopologyTooltip"
+                    @focus="showTopologyTooltip(instance, $event)"
+                    @blur="hideTopologyTooltip"
+                  >
+                    <span class="node-icon instance-icon" aria-hidden="true"></span>
+                    <span class="node-health" :class="instance.status" aria-hidden="true"></span>
+                    <span class="node-body">
+                      <span class="node-kicker">{{ t('services.instanceNode') }}</span>
+                      <strong>{{ instance.label }}</strong>
+                      <span>{{ instance.subtitle }}</span>
+                    </span>
+                  </button>
+                </div>
+              </article>
+            </div>
+          </article>
+          <div class="topology-legend" aria-hidden="true">
+            <span><i class="legend-dot online"></i>{{ t('common.online') }}</span>
+            <span><i class="legend-dot offline"></i>{{ t('common.offline') }}</span>
+          </div>
+        </div>
+
+        <div v-else-if="!loading" class="empty-state topology-empty">
+          <div class="empty-icon">□</div>
+          <p v-if="keyword">{{ t('services.noMatch', { keyword }) }}</p>
+          <p v-else>{{ t('services.topologyEmpty') }}</p>
+        </div>
+      </section>
+
+      <Teleport to="body">
+        <aside
+          v-if="hoveredTopologyNode"
+          class="topology-detail topology-tooltip"
+          :class="{ pinned: isTopologyTooltipPinned }"
+          :style="topologyTooltipStyle"
+          :aria-label="t('services.nodeDetails')"
+          @mouseenter="keepTopologyTooltip"
+          @mouseleave="hideTopologyTooltip"
+          @click.stop
+        >
+          <div class="detail-heading">
+            <span class="node-kicker">{{ topologyTypeText(hoveredTopologyNode.type) }}</span>
+            <h3>{{ hoveredTopologyNode.label }}</h3>
+            <span v-if="hoveredTopologyNode.status" class="status-badge" :class="hoveredTopologyNode.status">
+              {{ statusText(hoveredTopologyNode.status) }}
+            </span>
+          </div>
+
+          <dl class="detail-list">
+            <template v-for="row in hoveredTopologyNode.details" :key="row.label">
+              <dt>{{ row.label }}</dt>
+              <dd :class="{ mono: row.mono }">{{ row.value }}</dd>
+            </template>
+          </dl>
+
+          <div v-if="hoveredTopologyNode.endpoints?.length" class="detail-section">
+            <span class="info-label">{{ t('services.address') }}</span>
+            <div class="endpoint-list">
+              <a
+                v-for="ep in hoveredTopologyNode.endpoints"
+                :key="ep"
+                class="endpoint-link"
+                :href="ep"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                {{ friendlyEndpoint(ep) }}
+              </a>
+            </div>
+          </div>
+        </aside>
+      </Teleport>
+    </div>
+
+    <div v-if="viewMode === 'list'" class="service-list">
       <article v-for="item in filteredServices" :key="item.key" class="service-card">
         <header class="service-header">
           <div class="service-title">
@@ -130,7 +297,7 @@
       </article>
     </div>
 
-    <div v-if="!loading && filteredServices.length === 0" class="empty-state">
+    <div v-if="viewMode === 'list' && !loading && filteredServices.length === 0" class="empty-state">
       <div class="empty-icon">▣</div>
       <p v-if="keyword">{{ t('services.noMatch', { keyword }) }}</p>
       <p v-else>{{ t('services.empty') }}</p>
@@ -139,7 +306,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import api from "../api";
 import PathPrefixInput from "../components/PathPrefixInput.vue";
@@ -176,6 +343,43 @@ interface EnrichedService extends ServiceItem {
   view: ServiceView;
 }
 
+type ViewMode = "topology" | "list";
+type TopologyNodeType = "cluster" | "service" | "instance";
+
+interface DetailRow {
+  label: string;
+  value: string;
+  mono?: boolean;
+}
+
+interface TopologyNode {
+  id: string;
+  type: TopologyNodeType;
+  label: string;
+  subtitle: string;
+  status?: "online" | "offline";
+  details: DetailRow[];
+  endpoints?: string[];
+}
+
+interface TopologyInstance extends TopologyNode {
+  type: "instance";
+  status: "online" | "offline";
+  service: EnrichedService;
+}
+
+interface TopologyService extends TopologyNode {
+  type: "service";
+  instances: TopologyInstance[];
+  reachableCount: number;
+}
+
+interface TopologyCluster extends TopologyNode {
+  type: "cluster";
+  services: TopologyService[];
+  instanceCount: number;
+}
+
 const { t } = useI18n();
 const auth = useAuthStore();
 const clusters = ref<ClusterInfo[]>([]);
@@ -184,8 +388,14 @@ const selectedClusterId = ref("");
 const prefixInput = ref("/services/");
 const keyword = ref("");
 const showAdvanced = ref(false);
+const viewMode = ref<ViewMode>("topology");
 const loading = ref(false);
 const errorMessage = ref("");
+const selectedTopologyNodeId = ref("");
+const hoveredTopologyNode = ref<TopologyNode | null>(null);
+const topologyTooltip = ref({ x: 0, y: 0 });
+const isTopologyTooltipPinned = ref(false);
+let topologyTooltipHideTimer: ReturnType<typeof window.setTimeout> | undefined;
 
 const canRead = computed(() => auth.permissions.includes("cluster:read"));
 
@@ -295,8 +505,212 @@ const reachableCount = computed(
   () => filteredServices.value.filter((s) => s.view.endpoints.length > 0).length,
 );
 
+const firstValue = (...values: string[]) =>
+  values.find((value) => value.trim().length > 0) || t("common.notSet");
+
+const buildInstanceNode = (item: EnrichedService): TopologyInstance => {
+  const label = firstValue(item.view.instanceId, item.view.displayName);
+  const subtitle = item.view.endpoints[0]
+    ? friendlyEndpoint(item.view.endpoints[0])
+    : t("services.noAddress");
+
+  return {
+    id: `instance:${item.cluster_id}:${item.key}`,
+    type: "instance",
+    label,
+    subtitle,
+    status: item.view.status,
+    service: item,
+    endpoints: item.view.endpoints,
+    details: [
+      { label: t("services.env"), value: item.cluster_name },
+      { label: t("services.serviceNode"), value: item.view.displayName },
+      { label: t("services.instanceId"), value: label, mono: true },
+      { label: t("services.version"), value: firstValue(item.view.version) },
+      { label: t("services.namespace"), value: firstValue(item.view.namespace) },
+      { label: t("services.storagePath"), value: item.key, mono: true },
+      { label: t("services.configPath"), value: firstValue(item.view.appConfig), mono: true },
+    ],
+  };
+};
+
+const topologyClusters = computed<TopologyCluster[]>(() => {
+  const clusterMap = new Map<string, { name: string; items: EnrichedService[] }>();
+  for (const item of filteredServices.value) {
+    const group = clusterMap.get(item.cluster_id) || { name: item.cluster_name, items: [] };
+    group.items.push(item);
+    clusterMap.set(item.cluster_id, group);
+  }
+
+  return [...clusterMap.entries()]
+    .map(([clusterId, cluster]) => {
+      const serviceMap = new Map<string, EnrichedService[]>();
+      for (const item of cluster.items) {
+        const serviceKey = item.view.displayName || item.service_name || t("services.unknownService");
+        serviceMap.set(serviceKey, [...(serviceMap.get(serviceKey) || []), item]);
+      }
+
+      const serviceNodes = [...serviceMap.entries()]
+        .map(([serviceName, serviceItems]) => {
+          const instances = serviceItems.map(buildInstanceNode);
+          const reachable = instances.filter((instance) => instance.status === "online").length;
+          return {
+            id: `service:${clusterId}:${serviceName}`,
+            type: "service" as const,
+            label: serviceName,
+            subtitle: t("services.instanceSummary", {
+              count: instances.length,
+              reachable,
+            }),
+            instances,
+            reachableCount: reachable,
+            details: [
+              { label: t("services.env"), value: cluster.name },
+              { label: t("services.serviceNode"), value: serviceName },
+              { label: t("services.instances"), value: String(instances.length) },
+              { label: t("services.reachable"), value: String(reachable) },
+            ],
+          };
+        })
+        .sort((a, b) => a.label.localeCompare(b.label));
+
+      const instanceCount = serviceNodes.reduce((sum, service) => sum + service.instances.length, 0);
+      return {
+        id: `cluster:${clusterId}`,
+        type: "cluster" as const,
+        label: cluster.name,
+        subtitle: t("services.serviceSummary", {
+          services: serviceNodes.length,
+          instances: instanceCount,
+        }),
+        services: serviceNodes,
+        instanceCount,
+        details: [
+          { label: t("services.env"), value: cluster.name },
+          { label: t("services.clusterId"), value: clusterId, mono: true },
+          { label: t("services.types"), value: String(serviceNodes.length) },
+          { label: t("services.instances"), value: String(instanceCount) },
+        ],
+      };
+    })
+    .sort((a, b) => a.label.localeCompare(b.label));
+});
+
+const selectedTopologyNode = computed<TopologyNode | null>(() => {
+  if (!selectedTopologyNodeId.value) return null;
+  for (const cluster of topologyClusters.value) {
+    if (cluster.id === selectedTopologyNodeId.value) return cluster;
+    for (const service of cluster.services) {
+      if (service.id === selectedTopologyNodeId.value) return service;
+      const instance = service.instances.find((item) => item.id === selectedTopologyNodeId.value);
+      if (instance) return instance;
+    }
+  }
+  return null;
+});
+
+const topologyTooltipStyle = computed(() => ({
+  left: `${topologyTooltip.value.x}px`,
+  top: `${topologyTooltip.value.y}px`,
+}));
+
 const statusText = (status: "online" | "offline") =>
   status === "online" ? t("common.online") : t("common.offline");
+
+const topologyTypeText = (type: TopologyNodeType) => {
+  if (type === "cluster") return t("services.clusterNode");
+  if (type === "service") return t("services.serviceNode");
+  return t("services.instanceNode");
+};
+
+const selectTopologyNode = (node: TopologyNode, event?: MouseEvent) => {
+  keepTopologyTooltip();
+  selectedTopologyNodeId.value = node.id;
+  hoveredTopologyNode.value = node;
+  isTopologyTooltipPinned.value = true;
+  if (event) {
+    placeTooltipNearPointer(event);
+  }
+};
+
+const placeTooltipNearPointer = (event: MouseEvent) => {
+  const width = 320;
+  const padding = 16;
+  const offset = 18;
+  const height = Math.min(520, window.innerHeight - padding * 2);
+  const x =
+    event.clientX + width + offset > window.innerWidth
+      ? Math.max(padding, event.clientX - width - offset)
+      : event.clientX + offset;
+  const y = Math.min(Math.max(padding, event.clientY + offset), window.innerHeight - height - padding);
+  topologyTooltip.value = { x, y };
+};
+
+const placeTooltipNearElement = (event: FocusEvent) => {
+  const target = event.currentTarget as HTMLElement;
+  const rect = target.getBoundingClientRect();
+  const width = 320;
+  const padding = 16;
+  const height = Math.min(520, window.innerHeight - padding * 2);
+  const x =
+    rect.right + width + padding > window.innerWidth
+      ? Math.max(padding, rect.left - width - padding)
+      : rect.right + padding;
+  const y = Math.min(Math.max(padding, rect.top), window.innerHeight - height - padding);
+  topologyTooltip.value = { x, y };
+};
+
+const showTopologyTooltip = (node: TopologyNode, event: MouseEvent | FocusEvent) => {
+  if (isTopologyTooltipPinned.value) return;
+  keepTopologyTooltip();
+  hoveredTopologyNode.value = node;
+  if (event instanceof MouseEvent) {
+    placeTooltipNearPointer(event);
+  } else {
+    placeTooltipNearElement(event);
+  }
+};
+
+const moveTopologyTooltip = (event: MouseEvent) => {
+  if (hoveredTopologyNode.value && !isTopologyTooltipPinned.value) {
+    placeTooltipNearPointer(event);
+  }
+};
+
+const keepTopologyTooltip = () => {
+  if (topologyTooltipHideTimer) {
+    window.clearTimeout(topologyTooltipHideTimer);
+    topologyTooltipHideTimer = undefined;
+  }
+};
+
+const hideTopologyTooltip = () => {
+  if (isTopologyTooltipPinned.value) return;
+  keepTopologyTooltip();
+  topologyTooltipHideTimer = window.setTimeout(() => {
+    hoveredTopologyNode.value = null;
+    topologyTooltipHideTimer = undefined;
+  }, 180);
+};
+
+const closeTopologyTooltip = () => {
+  keepTopologyTooltip();
+  hoveredTopologyNode.value = null;
+  isTopologyTooltipPinned.value = false;
+  selectedTopologyNodeId.value = "";
+};
+
+const onDocumentClick = (event: MouseEvent) => {
+  const target = event.target as HTMLElement;
+  if (target.closest(".topology-node") || target.closest(".topology-tooltip")) return;
+  closeTopologyTooltip();
+};
+
+const onDocumentKeydown = (event: KeyboardEvent) => {
+  if (event.key === "Escape") {
+    closeTopologyTooltip();
+  }
+};
 
 const friendlyEndpoint = (url: string) => {
   try {
@@ -330,19 +744,30 @@ const loadServices = async () => {
       params.cluster_id = selectedClusterId.value;
     }
     services.value = (await api.get<ServiceItem[]>("/services", { params })).data || [];
-  } catch (err: any) {
+    selectedTopologyNodeId.value = "";
+  } catch {
     services.value = [];
-    errorMessage.value = err.message || t("services.loadFailed");
+    selectedTopologyNodeId.value = "";
+    errorMessage.value =
+      viewMode.value === "topology" ? t("services.topologyLoadFailed") : t("services.loadFailed");
   } finally {
     loading.value = false;
   }
 };
 
 onMounted(async () => {
+  document.addEventListener("click", onDocumentClick);
+  document.addEventListener("keydown", onDocumentKeydown);
   await loadClusters();
   if (canRead.value) {
     await loadServices();
   }
+});
+
+onUnmounted(() => {
+  document.removeEventListener("click", onDocumentClick);
+  document.removeEventListener("keydown", onDocumentKeydown);
+  keepTopologyTooltip();
 });
 </script>
 
@@ -354,6 +779,31 @@ onMounted(async () => {
 
 .services-view .filter-bar {
   margin-bottom: 0;
+}
+
+.view-switch {
+  display: inline-flex;
+  width: fit-content;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  gap: 4px;
+}
+
+.view-switch-btn {
+  min-height: 34px;
+  padding: 6px 14px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  box-shadow: none;
+}
+
+.view-switch-btn.active {
+  color: var(--primary);
+  background: var(--primary-dim);
+  border-color: var(--border-strong);
 }
 
 .advanced-toggle {
@@ -389,6 +839,528 @@ onMounted(async () => {
 .service-list {
   display: grid;
   gap: 14px;
+}
+
+.topology-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+}
+
+.topology-map,
+.topology-detail {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(5, 14, 28, 0.76);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), var(--shadow-sm);
+}
+
+.topology-map {
+  position: relative;
+  min-height: 560px;
+  padding: 50px 18px 18px;
+  overflow: auto;
+  background:
+    radial-gradient(circle at 24% 12%, rgba(34, 211, 238, 0.1), transparent 24%),
+    linear-gradient(90deg, rgba(56, 189, 248, 0.05) 1px, transparent 1px),
+    linear-gradient(rgba(56, 189, 248, 0.04) 1px, transparent 1px),
+    rgba(3, 12, 24, 0.88);
+  background-size: auto, 20px 20px, 20px 20px, auto;
+}
+
+.topology-map::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, rgba(56, 189, 248, 0.08) 1px, transparent 1px),
+    linear-gradient(rgba(56, 189, 248, 0.07) 1px, transparent 1px);
+  background-size: 100px 100px;
+  opacity: 0.42;
+}
+
+.topology-tools {
+  position: absolute;
+  top: 14px;
+  left: 16px;
+  z-index: 2;
+  display: inline-flex;
+  overflow: hidden;
+  border: 1px solid rgba(96, 165, 250, 0.2);
+  border-radius: var(--radius-xs);
+  background: rgba(4, 12, 25, 0.82);
+}
+
+.topology-tools span {
+  display: grid;
+  min-width: 42px;
+  height: 32px;
+  place-items: center;
+  border-right: 1px solid rgba(96, 165, 250, 0.16);
+  color: #c9d7ee;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.topology-tools span:last-child {
+  border-right: none;
+}
+
+.topology-clusters {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 18px;
+  min-width: 900px;
+}
+
+.topology-lanes {
+  display: grid;
+  grid-template-columns: 240px minmax(220px, 0.75fr) minmax(260px, 1fr);
+  gap: 34px;
+  padding: 0 0 12px;
+  color: #8ea5c8;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.topology-lanes span {
+  padding-left: 4px;
+}
+
+.topology-cluster {
+  position: relative;
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  gap: 34px;
+  align-items: start;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.topology-services,
+.topology-instances {
+  position: relative;
+  display: grid;
+  gap: 14px;
+}
+
+.topology-services::before,
+.topology-instances::before {
+  content: "";
+  position: absolute;
+  top: 26px;
+  bottom: 26px;
+  left: -18px;
+  width: 1px;
+  background: linear-gradient(180deg, transparent, rgba(34, 211, 238, 0.58), transparent);
+  box-shadow: 0 0 14px rgba(34, 211, 238, 0.3);
+}
+
+.topology-service {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(220px, 0.75fr) minmax(260px, 1fr);
+  gap: 34px;
+  align-items: start;
+}
+
+.topology-service::before,
+.topology-service::after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+}
+
+.topology-service::before {
+  top: 26px;
+  left: -34px;
+  width: 34px;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(34, 211, 238, 0.12), rgba(34, 211, 238, 0.75));
+  box-shadow: 0 0 12px rgba(34, 211, 238, 0.42);
+}
+
+.topology-service::after {
+  top: 26px;
+  left: calc(42.85% - 2px);
+  width: 36px;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(34, 211, 238, 0.72), rgba(34, 211, 238, 0.12));
+  box-shadow: 0 0 12px rgba(34, 211, 238, 0.32);
+}
+
+.topology-node {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 58px;
+  padding: 10px 12px;
+  border: 1px solid rgba(125, 211, 252, 0.18);
+  border-radius: var(--radius-sm);
+  background:
+    linear-gradient(135deg, rgba(148, 163, 184, 0.08), rgba(14, 165, 233, 0.04)),
+    rgba(9, 20, 36, 0.88);
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.22);
+  transition: border-color 0.18s, background 0.18s, transform 0.18s, box-shadow 0.18s;
+}
+
+.topology-node:focus-visible {
+  outline: 2px solid rgba(34, 211, 238, 0.86);
+  outline-offset: 3px;
+}
+
+.topology-node::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: -34px;
+  width: 34px;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(34, 211, 238, 0.08), rgba(34, 211, 238, 0.75));
+  box-shadow: 0 0 12px rgba(34, 211, 238, 0.34);
+}
+
+.cluster-node::before {
+  display: none;
+}
+
+.node-icon {
+  position: relative;
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  flex-shrink: 0;
+  border: 1px solid rgba(56, 189, 248, 0.42);
+  background: rgba(14, 165, 233, 0.1);
+}
+
+.node-icon::before,
+.node-icon::after {
+  content: "";
+  position: absolute;
+  border-radius: 50%;
+}
+
+.node-icon::before {
+  inset: 7px;
+  border: 2px solid var(--primary);
+  background: transparent;
+  box-shadow: 0 0 14px var(--primary-glow);
+}
+
+.node-icon::after {
+  display: none;
+}
+
+.cluster-icon {
+  width: 52px;
+  height: 52px;
+  border: 0;
+  border-radius: 14px;
+  background: radial-gradient(circle, rgba(34, 211, 238, 0.16), transparent 68%);
+}
+
+.cluster-icon::before {
+  inset: 7px 8px 10px;
+  border: 3px solid #38bdf8;
+  border-top-width: 5px;
+  border-bottom-width: 5px;
+  border-radius: 50% / 18%;
+  box-shadow: inset 0 8px 0 rgba(56, 189, 248, 0.12), inset 0 -8px 0 rgba(56, 189, 248, 0.12), 0 0 18px rgba(56, 189, 248, 0.42);
+}
+
+.service-icon {
+  background: rgba(14, 165, 233, 0.1);
+}
+
+.service-icon::before {
+  border-color: #38bdf8;
+  border-radius: 3px;
+  transform: rotate(30deg) skewY(-30deg);
+  box-shadow: 0 0 14px rgba(56, 189, 248, 0.34);
+}
+
+.instance-icon {
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  border-color: rgba(148, 163, 184, 0.34);
+  background: rgba(15, 23, 42, 0.94);
+}
+
+.instance-icon::before {
+  inset: 4px;
+  border: 0;
+  border-radius: 999px;
+}
+
+.instance-node.online .instance-icon::before {
+  background: var(--success);
+  box-shadow: 0 0 14px rgba(74, 222, 128, 0.48);
+}
+
+.instance-node.offline .instance-icon::before {
+  background: var(--danger);
+  box-shadow: 0 0 14px rgba(248, 113, 113, 0.35);
+}
+
+.node-body {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.topology-node strong,
+.node-body > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topology-node strong {
+  font-size: 14px;
+  line-height: 1.2;
+}
+
+.node-body > span:last-child {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.topology-node:hover,
+.topology-node.selected {
+  border-color: rgba(56, 189, 248, 0.82);
+  background:
+    linear-gradient(135deg, rgba(34, 211, 238, 0.18), rgba(96, 165, 250, 0.08)),
+    rgba(8, 22, 40, 0.96);
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.26), 0 0 0 1px rgba(56, 189, 248, 0.16);
+  transform: translateY(-1px);
+}
+
+.cluster-node {
+  min-height: 120px;
+  align-self: center;
+  border-color: rgba(56, 189, 248, 0.54);
+  background:
+    linear-gradient(135deg, rgba(56, 189, 248, 0.11), rgba(59, 130, 246, 0.04)),
+    rgba(7, 19, 35, 0.96);
+  box-shadow: 0 16px 34px rgba(0, 0, 0, 0.28), inset 0 0 0 1px rgba(56, 189, 248, 0.12);
+}
+
+.cluster-node:hover,
+.cluster-node.selected {
+  border-color: rgba(34, 211, 238, 0.95);
+  box-shadow:
+    0 18px 38px rgba(0, 0, 0, 0.32),
+    0 0 0 2px rgba(34, 211, 238, 0.3),
+    0 0 28px rgba(34, 211, 238, 0.2);
+}
+
+.cluster-node:hover .cluster-icon,
+.cluster-node.selected .cluster-icon {
+  background: radial-gradient(circle, rgba(34, 211, 238, 0.28), transparent 72%);
+}
+
+.instance-node.online {
+  border-color: rgba(74, 222, 128, 0.22);
+}
+
+.instance-node.offline {
+  border-color: rgba(248, 113, 113, 0.22);
+}
+
+.node-kicker {
+  color: #8ea5c8;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.node-health {
+  position: absolute;
+  top: 9px;
+  right: 9px;
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: var(--muted);
+  box-shadow: 0 0 0 3px rgba(148, 163, 184, 0.12);
+}
+
+.node-health.online {
+  background: var(--success);
+  box-shadow: 0 0 0 3px rgba(74, 222, 128, 0.12), 0 0 12px rgba(74, 222, 128, 0.48);
+}
+
+.node-health.offline {
+  background: var(--danger);
+  box-shadow: 0 0 0 3px rgba(248, 113, 113, 0.12), 0 0 12px rgba(248, 113, 113, 0.35);
+}
+
+.topology-detail {
+  min-height: 0;
+  padding: 16px;
+  background:
+    radial-gradient(circle at 0 0, rgba(56, 189, 248, 0.08), transparent 35%),
+    rgba(8, 18, 34, 0.9);
+}
+
+.topology-tooltip {
+  position: fixed;
+  z-index: 80;
+  width: min(320px, calc(100vw - 32px));
+  max-height: min(520px, calc(100vh - 32px));
+  overflow: auto;
+  pointer-events: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(34, 211, 238, 0.55) rgba(15, 23, 42, 0.8);
+  backdrop-filter: blur(18px) saturate(1.15);
+  transform: translate3d(0, 0, 0);
+}
+
+.topology-tooltip.pinned {
+  border-color: rgba(34, 211, 238, 0.72);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 16px 42px rgba(0, 0, 0, 0.38),
+    0 0 0 2px rgba(34, 211, 238, 0.16);
+}
+
+.topology-tooltip::-webkit-scrollbar {
+  width: 8px;
+}
+
+.topology-tooltip::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.8);
+}
+
+.topology-tooltip::-webkit-scrollbar-thumb {
+  background: rgba(34, 211, 238, 0.55);
+  border-radius: 999px;
+}
+
+.detail-heading {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 10px;
+  margin-bottom: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.detail-heading h3 {
+  grid-column: 1 / 2;
+  margin: 0;
+  color: var(--text);
+  font-size: 18px;
+  line-height: 1.3;
+  word-break: break-word;
+}
+
+.detail-heading .status-badge {
+  grid-column: 2 / 3;
+  grid-row: 1 / 3;
+  align-self: center;
+  width: fit-content;
+}
+
+.detail-list {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0;
+  margin: 0;
+}
+
+.detail-list dt {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  padding-top: 10px;
+}
+
+.detail-list dd {
+  margin: 4px 0 0;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(125, 211, 252, 0.1);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.detail-section {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.detail-placeholder {
+  min-height: 480px;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  text-align: center;
+  line-height: 1.5;
+}
+
+.topology-legend {
+  position: sticky;
+  left: 0;
+  bottom: 0;
+  z-index: 2;
+  display: inline-flex;
+  gap: 22px;
+  width: fit-content;
+  margin-top: 18px;
+  padding: 10px 14px;
+  border: 1px solid rgba(125, 211, 252, 0.18);
+  border-radius: var(--radius-sm);
+  background: rgba(4, 12, 25, 0.86);
+  color: #9fb1cc;
+  font-size: 12px;
+}
+
+.topology-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.legend-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: var(--muted);
+}
+
+.legend-dot.online {
+  background: var(--success);
+  box-shadow: 0 0 10px rgba(74, 222, 128, 0.5);
+}
+
+.legend-dot.offline {
+  background: var(--danger);
+  box-shadow: 0 0 10px rgba(248, 113, 113, 0.4);
+}
+
+.topology-empty {
+  margin: 0;
 }
 
 .service-card {
@@ -622,5 +1594,11 @@ onMounted(async () => {
   word-break: break-all;
   color: #a5f3fc;
   font-size: 11px;
+}
+
+@media (max-width: 900px) {
+  .topology-layout {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

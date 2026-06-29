@@ -35,13 +35,19 @@ fn resolve_config_path() -> String {
     if let Ok(path) = env::var("ETCD_MANAGER_CONFIG") {
         return path;
     }
+    if fs::metadata("config/config.test.toml").is_ok() {
+        return "config/config.test.toml".to_string();
+    }
+    if fs::metadata("../config/config.test.toml").is_ok() {
+        return "../config/config.test.toml".to_string();
+    }
     if fs::metadata("config.toml").is_ok() {
         return "config.toml".to_string();
     }
     if fs::metadata("../config.toml").is_ok() {
         return "../config.toml".to_string();
     }
-    "config.toml".to_string()
+    "config/config.test.toml".to_string()
 }
 
 fn default_database_url() -> String {

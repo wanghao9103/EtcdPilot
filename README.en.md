@@ -21,7 +21,7 @@ EtcdPilot is a lightweight etcd management console for browsing, editing, and au
 ├── frontend/         # Vue 3 + Vite web console
 ├── docs/             # Design documents
 ├── scripts/          # Local build and sync scripts
-├── config.toml       # Default configuration
+├── config/           # Environment configuration files
 ├── Dockerfile        # Container image build
 └── docker-compose.yml
 ```
@@ -37,7 +37,7 @@ Docker is optional for containerized deployment.
 
 ## Configuration
 
-The backend reads configuration from `config.toml` by default. You can override the path with `ETCD_MANAGER_CONFIG`.
+The backend reads configuration from `config/config.test.toml` by default. Production settings live in `config/config.prod.toml`. You can override the path with `ETCD_MANAGER_CONFIG`.
 
 Important settings:
 
@@ -116,7 +116,7 @@ Start the service with Docker Compose:
 docker compose up --build
 ```
 
-The container exposes port `8080` and mounts `config.toml` into `/etc/etcdpilot/config.toml`.
+The container exposes port `8080` and mounts `config/config.prod.toml` into `/etc/etcdpilot/config.toml`.
 
 ## Design Documents
 

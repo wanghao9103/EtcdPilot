@@ -2,7 +2,7 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "EtcdPilot: Backend (Rust)",
+      "name": "EtcdPilot: Backend Test (Rust)",
       "type": "cppvsdbg",
       "request": "launch",
       "program": "${workspaceFolder}/backend/target/debug/etcdpilot-backend.exe",
@@ -10,8 +10,23 @@
       "cwd": "${workspaceFolder}/backend",
       "console": "integratedTerminal",
       "env": {
-        "ETCD_MANAGER_CONFIG": "${workspaceFolder}/config.toml",
+        "ETCD_MANAGER_CONFIG": "${workspaceFolder}/config/config.test.toml",
         "ETCD_MANAGER_SESSION_SECRET": "etcdpilot-local-session-secret"
+      },
+      "preLaunchTask": "backend: predebug (build web + build backend)",
+      "symbolSearchPath": "${workspaceFolder}/backend/target/debug"
+    },
+    {
+      "name": "EtcdPilot: Backend Prod (Rust)",
+      "type": "cppvsdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/backend/target/debug/etcdpilot-backend.exe",
+      "args": [],
+      "cwd": "${workspaceFolder}/backend",
+      "console": "integratedTerminal",
+      "env": {
+        "ETCD_MANAGER_CONFIG": "${workspaceFolder}/config/config.prod.toml",
+        "ETCD_MANAGER_SESSION_SECRET": "change-me-before-prod-debug"
       },
       "preLaunchTask": "backend: predebug (build web + build backend)",
       "symbolSearchPath": "${workspaceFolder}/backend/target/debug"
@@ -52,7 +67,7 @@
     {
       "name": "EtcdPilot: All (Backend + Frontend)",
       "configurations": [
-        "EtcdPilot: Backend (Rust)",
+        "EtcdPilot: Backend Test (Rust)",
         "EtcdPilot: Frontend (Vite)",
         "EtcdPilot: Frontend Browser"
       ],

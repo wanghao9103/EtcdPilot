@@ -1,0 +1,23 @@
+[server]
+addr = "0.0.0.0:8080"
+
+[database]
+url = "sqlite:///var/lib/etcdpilot/etcdpilot.db"
+
+[security]
+session_secret_env = "ETCD_MANAGER_SESSION_SECRET"
+cookie_secure = true
+session_ttl_seconds = 3600
+
+[web]
+dist_dir = "web/dist"
+
+[[clusters]]
+id = "prod"
+name = "Production"
+endpoints = [
+  "https://etcd-1.example.com:2379",
+  "https://etcd-2.example.com:2379",
+  "https://etcd-3.example.com:2379",
+]
+readonly = false
