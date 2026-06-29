@@ -1,12 +1,17 @@
 use axum::{
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
-    response::IntoResponse,
+    response::{
+        sse::{Event, Sse},
+        IntoResponse,
+    },
     routing::{get, post, put},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::convert::Infallible;
+use tokio_stream::StreamExt;
 
 use crate::{
     auth::{self, AuthContext},
@@ -33,6 +38,18 @@ pub struct ServiceQuery {
 #[derive(Deserialize)]
 pub struct KvQuery {
     pub key: Option<String>,
+    pub revision: Option<i64>,
+}
+
+#[derive(Deserialize)]
+pub struct KvHistoryQuery {
+    pub key: String,
+    pub limit: Option<usize>,
+}
+
+#[derive(Deserialize)]
+pub struct KvWatchQuery {
+    pub prefix: String,
 }
 
 #[derive(Serialize)]
@@ -68,12 +85,18 @@ pub fn api_routes() -> Router<AppState> {
         )
         .route("/api/clusters/:id/test", post(test_cluster))
         .route("/api/clusters/:id/status", get(cluster_status))
+        .route(
+            "/api/clusters/:id/endpoints/status",
+            get(cluster_endpoint_statuses),
+        )
         .route("/api/clusters/:id/members", get(cluster_members))
         .route("/api/clusters/:id/kv", get(list_kv))
         .route(
             "/api/clusters/:id/kv/item",
             get(get_kv_item).put(put_kv_item).delete(delete_kv_item),
         )
+        .route("/api/clusters/:id/kv/history", get(get_kv_history))
+        .route("/api/clusters/:id/kv/watch", get(watch_kv))
         .route("/api/clusters/:id/leases", get(list_leases))
         .route("/api/clusters/:id/leases/:lease_id", get(get_lease))
         .route("/api/services", get(list_services))
@@ -256,6 +279,18 @@ async fn cluster_status(
     Ok(Json(status))
 }
 
+async fn cluster_endpoint_statuses(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<crate::models::EndpointStatusResponse>> {
+    let user = auth::require_user(&headers, &state.config)?;
+    require_permission(&user, "cluster:read")?;
+    let cluster = etcd::resolve_cluster_by_id(&state, &id).await?;
+    let status = etcd::endpoint_statuses(&cluster).await?;
+    Ok(Json(status))
+}
+
 async fn cluster_members(
     headers: HeaderMap,
     State(state): State<AppState>,
@@ -293,8 +328,44 @@ async fn get_kv_item(
     require_permission(&user, "key:read")?;
     let cluster = etcd::resolve_cluster_by_id(&state, &id).await?;
     let key = query.key.unwrap_or_default();
-    let item = etcd::get_kv_item(&cluster, key).await?;
+    let item = etcd::get_kv_item(&cluster, key, query.revision).await?;
     Ok(Json(item))
+}
+
+async fn get_kv_history(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<KvHistoryQuery>,
+) -> Result<Json<crate::models::KvHistoryResponse>> {
+    let user = auth::require_user(&headers, &state.config)?;
+    require_permission(&user, "key:read")?;
+    let cluster = etcd::resolve_cluster_by_id(&state, &id).await?;
+    let history = etcd::kv_history(&cluster, query.key, query.limit.unwrap_or(20)).await?;
+    Ok(Json(history))
+}
+
+async fn watch_kv(
+    headers: HeaderMap,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(query): Query<KvWatchQuery>,
+) -> Result<Sse<impl tokio_stream::Stream<Item = std::result::Result<Event, Infallible>>>> {
+    let user = auth::require_user(&headers, &state.config)?;
+    require_permission(&user, "key:read")?;
+    let cluster = etcd::resolve_cluster_by_id(&state, &id).await?;
+    let stream = etcd::watch_prefix(&cluster, query.prefix).await?;
+    let events = stream.map(|item| {
+        let event = match item {
+            Ok(payload) => Event::default()
+                .event(payload.event_type.clone())
+                .json_data(payload)
+                .unwrap_or_else(|_| Event::default().event("error").data("serialize failed")),
+            Err(err) => Event::default().event("error").data(err.to_string()),
+        };
+        Ok::<Event, Infallible>(event)
+    });
+    Ok(Sse::new(events))
 }
 
 async fn put_kv_item(

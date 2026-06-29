@@ -71,6 +71,28 @@ pub struct ClusterInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EndpointStatusItem {
+    pub endpoint: String,
+    pub reachable: bool,
+    pub version: Option<String>,
+    pub leader: Option<u64>,
+    pub raft_term: Option<u64>,
+    pub raft_index: Option<u64>,
+    pub raft_applied_index: Option<u64>,
+    pub raft_used_db_size: Option<i64>,
+    pub db_size: Option<i64>,
+    pub errors: Vec<String>,
+    pub is_learner: Option<bool>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EndpointStatusResponse {
+    pub cluster_id: String,
+    pub endpoints: Vec<EndpointStatusItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoginRequest {
     pub username: String,
     pub password: String,
@@ -134,6 +156,22 @@ pub struct KvItem {
     pub version: i64,
     pub create_revision: i64,
     pub mod_revision: i64,
+    pub lease: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KvHistoryResponse {
+    pub key: String,
+    pub compacted: bool,
+    pub items: Vec<KvItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KvWatchEvent {
+    pub event_type: String,
+    pub key: String,
+    pub value: Option<String>,
+    pub revision: i64,
     pub lease: Option<i64>,
 }
 

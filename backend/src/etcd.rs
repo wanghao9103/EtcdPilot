@@ -1,12 +1,17 @@
 use std::time::Duration;
 
-use etcd_client::{Client, DeleteOptions, GetOptions, LeaseTimeToLiveOptions, PutOptions};
+use etcd_client::{
+    Client, DeleteOptions, EventType, GetOptions, LeaseTimeToLiveOptions, PutOptions,
+    WatchOptions,
+};
+use tokio::sync::mpsc;
 use tokio::time::timeout;
+use tokio_stream::wrappers::ReceiverStream;
 
 use crate::{
     db,
     error::{AppError, Result},
-    models::KvItem,
+    models::{EndpointStatusItem, EndpointStatusResponse, KvHistoryResponse, KvItem, KvWatchEvent},
     AppState,
 };
 
@@ -91,6 +96,61 @@ pub async fn status(cluster: &ResolvedCluster) -> Result<serde_json::Value> {
         "errors": response.errors(),
         "is_learner": response.is_learner(),
     }))
+}
+
+pub async fn endpoint_statuses(cluster: &ResolvedCluster) -> Result<EndpointStatusResponse> {
+    let endpoints = normalize_endpoints(&cluster.endpoints);
+    if endpoints.is_empty() {
+        return Err(AppError::Validation("cluster has no endpoint".to_string()));
+    }
+
+    let mut items = Vec::with_capacity(endpoints.len());
+    for endpoint in endpoints {
+        let result = async {
+            let client = connect_client(&[endpoint.clone()]).await?;
+            let mut maintenance = client.maintenance_client();
+            let response = timeout(Duration::from_secs(3), maintenance.status())
+                .await
+                .map_err(|_| AppError::Validation("etcd status timeout".to_string()))?
+                .map_err(|err| AppError::Internal(format!("etcd status failed: {err}")))?;
+
+            Ok::<EndpointStatusItem, AppError>(EndpointStatusItem {
+                endpoint: endpoint.clone(),
+                reachable: true,
+                version: Some(response.version().to_string()),
+                leader: Some(response.leader()),
+                raft_term: Some(response.raft_term()),
+                raft_index: Some(response.raft_index()),
+                raft_applied_index: Some(response.raft_applied_index()),
+                raft_used_db_size: Some(response.raft_used_db_size()),
+                db_size: Some(response.db_size()),
+                errors: response.errors().to_vec(),
+                is_learner: Some(response.is_learner()),
+                error: None,
+            })
+        }
+        .await;
+
+        items.push(result.unwrap_or_else(|err| EndpointStatusItem {
+            endpoint,
+            reachable: false,
+            version: None,
+            leader: None,
+            raft_term: None,
+            raft_index: None,
+            raft_applied_index: None,
+            raft_used_db_size: None,
+            db_size: None,
+            errors: Vec::new(),
+            is_learner: None,
+            error: Some(err.to_string()),
+        }));
+    }
+
+    Ok(EndpointStatusResponse {
+        cluster_id: cluster.cluster_id.clone(),
+        endpoints: items,
+    })
 }
 
 pub async fn members(cluster: &ResolvedCluster) -> Result<Vec<serde_json::Value>> {
@@ -208,13 +268,128 @@ pub async fn get_lease(cluster: &ResolvedCluster, lease_id: i64) -> Result<serde
     }))
 }
 
-pub async fn get_kv_item(cluster: &ResolvedCluster, key: String) -> Result<Option<KvItem>> {
+pub async fn get_kv_item(
+    cluster: &ResolvedCluster,
+    key: String,
+    revision: Option<i64>,
+) -> Result<Option<KvItem>> {
     let key = key.trim().to_string();
     if key.is_empty() {
         return Ok(None);
     }
-    let mut kvs = fetch_kv(cluster, key, None).await?;
+    let options = revision
+        .filter(|value| *value > 0)
+        .map(|value| GetOptions::new().with_revision(value));
+    let mut kvs = fetch_kv(cluster, key, options).await?;
     Ok(kvs.pop())
+}
+
+pub async fn kv_history(
+    cluster: &ResolvedCluster,
+    key: String,
+    limit: usize,
+) -> Result<KvHistoryResponse> {
+    let key = key.trim().to_string();
+    if key.is_empty() {
+        return Err(AppError::Validation("key is required".to_string()));
+    }
+
+    let current = get_kv_item(cluster, key.clone(), None).await?;
+    let Some(current) = current else {
+        return Ok(KvHistoryResponse {
+            key,
+            compacted: false,
+            items: Vec::new(),
+        });
+    };
+
+    let mut items = vec![current.clone()];
+    let mut compacted = false;
+    let mut revision = current.mod_revision - 1;
+    let target = limit.clamp(1, 50);
+
+    while revision > 0 && items.len() < target {
+        match get_kv_item(cluster, key.clone(), Some(revision)).await {
+            Ok(Some(item)) => {
+                let is_duplicate = items
+                    .last()
+                    .map(|last| last.value == item.value && last.mod_revision == item.mod_revision)
+                    .unwrap_or(false);
+                if !is_duplicate {
+                    items.push(item.clone());
+                }
+                revision = item.mod_revision.saturating_sub(1);
+            }
+            Ok(None) => break,
+            Err(err) if err.to_string().to_lowercase().contains("compacted") => {
+                compacted = true;
+                break;
+            }
+            Err(err) => return Err(err),
+        }
+    }
+
+    Ok(KvHistoryResponse {
+        key,
+        compacted,
+        items,
+    })
+}
+
+pub async fn watch_prefix(
+    cluster: &ResolvedCluster,
+    prefix: String,
+) -> Result<ReceiverStream<Result<KvWatchEvent>>> {
+    let prefix = prefix.trim().to_string();
+    if prefix.is_empty() {
+        return Err(AppError::Validation("prefix is required".to_string()));
+    }
+
+    let endpoints = normalize_endpoints(&cluster.endpoints);
+    if endpoints.is_empty() {
+        return Err(AppError::Validation("cluster has no endpoint".to_string()));
+    }
+
+    let client = connect_client(&endpoints).await?;
+    let mut watch_client = client.watch_client();
+    let options = Some(WatchOptions::new().with_prefix());
+    let (_watcher, mut stream) = watch_client
+        .watch(prefix, options)
+        .await
+        .map_err(|err| AppError::Internal(format!("etcd watch failed: {err}")))?;
+
+    let (tx, rx) = mpsc::channel(100);
+    tokio::spawn(async move {
+        while let Ok(Some(resp)) = stream.message().await {
+            for event in resp.events() {
+                let Some(kv) = event.kv() else { continue };
+                let event_type = match event.event_type() {
+                    EventType::Put => "put",
+                    EventType::Delete => "delete",
+                };
+                let item = KvWatchEvent {
+                    event_type: event_type.to_string(),
+                    key: String::from_utf8_lossy(kv.key()).to_string(),
+                    value: if event.event_type() == EventType::Put {
+                        Some(bytes_to_string(kv.value()))
+                    } else {
+                        None
+                    },
+                    revision: kv.mod_revision(),
+                    lease: if kv.lease() == 0 {
+                        None
+                    } else {
+                        Some(kv.lease())
+                    },
+                };
+                if tx.send(Ok(item)).await.is_err() {
+                    return;
+                }
+            }
+        }
+    });
+
+    Ok(ReceiverStream::new(rx))
 }
 
 pub async fn put_kv(

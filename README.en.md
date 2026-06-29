@@ -6,6 +6,9 @@ EtcdPilot is a lightweight etcd management console for browsing, editing, and au
 
 - Manage multiple etcd clusters and check connectivity.
 - Browse, read, edit, and delete key-value data.
+- Inspect endpoint-level etcd health and raft status.
+- Read key values at a specific revision when etcd still retains the revision.
+- Watch key or prefix changes in real time.
 - Inspect service registration data under configurable prefixes such as `/services/`.
 - View leases and linked keys.
 - Record and browse audit logs for user operations.
@@ -46,6 +49,8 @@ Important settings:
 - `security.session_secret_env`: environment variable name that contains the session secret.
 - `web.dist_dir`: frontend static file directory served by the backend.
 - `clusters`: configured etcd clusters.
+
+Revision history depends on etcd MVCC retention. Revisions compacted by etcd cannot be read from EtcdPilot.
 
 Set a strong session secret before running outside local development:
 

@@ -1,5 +1,12 @@
 # EtcdPilot
 
+## 观测能力
+
+- 查看 endpoint 级别的 etcd 健康和 raft 状态。
+- 在 etcd 仍保留 revision 时读取指定 revision 的 key value。
+- 实时监听 key 或 prefix 变化。
+- Revision 历史依赖 etcd MVCC 保留策略，已经被 compact 的 revision 无法通过 EtcdPilot 读取。
+
 EtcdPilot 是一个轻量级 etcd 管理控制台，用于通过 Web 界面浏览、编辑和审计 etcd 数据。项目后端使用 Rust Axum，前端使用 Vue 3 和 Vite，本地应用元数据使用 SQLite 存储。
 
 ## 功能特性

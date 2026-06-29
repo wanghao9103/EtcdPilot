@@ -98,6 +98,26 @@
               <span>{{ t('clusters.clusterId') }}</span>
               <code class="mono">{{ cluster.id }}</code>
             </div>
+            <div v-if="endpointStatuses[cluster.id]?.length" class="endpoint-status-list">
+              <article
+                v-for="endpoint in endpointStatuses[cluster.id]"
+                :key="endpoint.endpoint"
+                class="endpoint-status-card"
+                :class="{ reachable: endpoint.reachable, failed: !endpoint.reachable }"
+              >
+                <header>
+                  <span class="status-dot" :class="endpoint.reachable ? 'online' : 'offline'"></span>
+                  <strong class="mono">{{ endpoint.endpoint }}</strong>
+                </header>
+                <div class="endpoint-metrics">
+                  <span>{{ t("clusters.version") }}: {{ endpoint.version || t("common.notSet") }}</span>
+                  <span>{{ t("clusters.leader") }}: {{ endpoint.leader ?? t("common.notSet") }}</span>
+                  <span>{{ t("clusters.raftIndex") }}: {{ endpoint.raft_index ?? t("common.notSet") }}</span>
+                  <span>{{ t("clusters.dbSize") }}: {{ formatBytes(endpoint.db_size) }}</span>
+                </div>
+                <p v-if="endpoint.error" class="endpoint-error">{{ endpoint.error }}</p>
+              </article>
+            </div>
             <div v-if="clusterStatus[cluster.id]" class="tech-row">
               <span>{{ t('clusters.statusData') }}</span>
               <pre class="pre-block">{{ formatStatus(clusterStatus[cluster.id]) }}</pre>
@@ -130,9 +150,30 @@ import { computed, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import api from "../api";
 
+interface EndpointStatusItem {
+  endpoint: string;
+  reachable: boolean;
+  version?: string;
+  leader?: number;
+  raft_term?: number;
+  raft_index?: number;
+  raft_applied_index?: number;
+  raft_used_db_size?: number;
+  db_size?: number;
+  errors: string[];
+  is_learner?: boolean;
+  error?: string;
+}
+
+interface EndpointStatusResponse {
+  cluster_id: string;
+  endpoints: EndpointStatusItem[];
+}
+
 const { t } = useI18n();
 const clusters = ref<any[]>([]);
 const clusterStatus = ref<Record<string, any>>({});
+const endpointStatuses = ref<Record<string, EndpointStatusItem[]>>({});
 const clusterMembers = ref<Record<string, any[]>>({});
 const clusterTestResult = ref<Record<string, string>>({});
 const busyById = ref<Record<string, "test" | "status" | "members" | "">>({});
@@ -202,9 +243,15 @@ const test = async (id: string) => {
 const loadStatus = async (id: string) => {
   markBusy(id, "status");
   try {
-    clusterStatus.value[id] = (await api.get(`/clusters/${id}/status`)).data;
+    const [statusResp, endpointResp] = await Promise.all([
+      api.get(`/clusters/${id}/status`),
+      api.get<EndpointStatusResponse>(`/clusters/${id}/endpoints/status`),
+    ]);
+    clusterStatus.value[id] = statusResp.data;
+    endpointStatuses.value[id] = endpointResp.data.endpoints || [];
   } catch (err: any) {
     clusterStatus.value[id] = { error: err?.message || "failed" };
+    endpointStatuses.value[id] = [];
   } finally {
     markBusy(id, "");
   }
@@ -225,6 +272,14 @@ const loadMembers = async (id: string) => {
 const formatStatus = (payload: unknown) => {
   if (!payload) return "";
   return JSON.stringify(payload, null, 2);
+};
+
+const formatBytes = (value?: number) => {
+  if (!value || value < 0) return t("common.notSet");
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  if (value < 1024 * 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MB`;
+  return `${(value / 1024 / 1024 / 1024).toFixed(1)} GB`;
 };
 
 onMounted(loadClusters);
@@ -309,6 +364,58 @@ onMounted(loadClusters);
 
 .tech-actions {
   margin-bottom: 4px;
+}
+
+.endpoint-status-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.endpoint-status-card {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.endpoint-status-card.reachable {
+  border-color: rgba(74, 222, 128, 0.22);
+}
+
+.endpoint-status-card.failed {
+  border-color: rgba(248, 113, 113, 0.22);
+}
+
+.endpoint-status-card header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.endpoint-status-card header strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.endpoint-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 6px 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.endpoint-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-word;
 }
 
 .tech-meta-title {

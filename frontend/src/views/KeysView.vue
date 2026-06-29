@@ -75,8 +75,8 @@
         v-for="row in filteredRows"
         :key="row.key + row.revision"
         class="data-card interactive-card"
-        :class="{ active: editingKey === row.key }"
-        @click.stop="loadOne(row.key)"
+        :class="{ active: editingKey === row.key || selectedKey?.key === row.key }"
+        @click.stop="selectKey(row); loadOne(row.key)"
       >
         <div class="data-card-head">
           <h4 class="mono">{{ shortKey(row.key) }}</h4>
@@ -99,11 +99,99 @@
         <p v-else>{{ t('keys.empty') }}</p>
       </div>
     </div>
+
+    <aside class="key-detail-panel">
+      <div v-if="selectedKey" class="key-detail-content">
+        <header class="key-detail-head">
+          <div>
+            <p class="info-label">{{ t("keys.selectedKey") }}</p>
+            <h3 class="mono">{{ selectedKey.key }}</h3>
+          </div>
+        </header>
+        <div class="detail-tabs" role="tablist">
+          <button :class="{ active: detailTab === 'details' }" @click="detailTab = 'details'">
+            {{ t("keys.details") }}
+          </button>
+          <button :class="{ active: detailTab === 'history' }" @click="detailTab = 'history'; loadHistory()">
+            {{ t("keys.history") }}
+          </button>
+          <button :class="{ active: detailTab === 'watch' }" @click="detailTab = 'watch'">
+            {{ t("keys.watch") }}
+          </button>
+        </div>
+        <section v-if="detailTab === 'details'" class="key-detail-section">
+          <dl class="detail-list">
+            <dt>{{ t("keys.revision") }}</dt>
+            <dd>{{ selectedKey.revision }}</dd>
+            <dt>{{ t("keys.version") }}</dt>
+            <dd>{{ selectedKey.version }}</dd>
+            <dt>{{ t("keys.linkedLease") }}</dt>
+            <dd>{{ selectedKey.lease || t("common.notSet") }}</dd>
+          </dl>
+          <pre class="value-preview mono">{{ selectedKey.value }}</pre>
+        </section>
+        <section v-if="detailTab === 'history'" class="key-detail-section">
+          <div class="revision-query">
+            <input v-model="revisionInput" :placeholder="t('keys.revision')" />
+            <button class="primary" @click="loadRevision" :disabled="historyLoading">
+              {{ historyLoading ? t("common.querying") : t("common.query") }}
+            </button>
+          </div>
+          <p v-if="historyError" class="message error">{{ historyError }}</p>
+          <p v-if="historyCompacted" class="message warn">{{ t("keys.historyCompacted") }}</p>
+          <article v-if="revisionItem" class="history-item">
+            <strong>{{ t("keys.revision") }} {{ revisionItem.revision }}</strong>
+            <pre class="value-preview mono">{{ revisionItem.value }}</pre>
+          </article>
+          <article v-for="item in history" :key="item.revision" class="history-item">
+            <strong>{{ t("keys.revision") }} {{ item.revision }}</strong>
+            <span>{{ t("keys.version") }} {{ item.version }}</span>
+            <pre class="value-preview mono">{{ item.value }}</pre>
+          </article>
+        </section>
+        <section v-if="detailTab === 'watch'" class="key-detail-section">
+          <div class="watch-controls">
+            <input v-model="watchPrefix" :placeholder="selectedKey?.key || prefix" />
+            <button class="primary" @click="startWatch" :disabled="watchStatus === 'running'">
+              {{ t("keys.startWatch") }}
+            </button>
+            <button class="ghost" @click="toggleWatchPause" :disabled="watchStatus === 'idle'">
+              {{ watchPaused ? t("keys.resumeWatch") : t("keys.pauseWatch") }}
+            </button>
+            <button class="ghost" @click="stopWatch" :disabled="watchStatus === 'idle'">
+              {{ t("keys.stopWatch") }}
+            </button>
+            <button class="ghost" @click="clearWatchEvents">{{ t("common.clear") }}</button>
+          </div>
+          <div class="watch-filters">
+            <button :class="{ active: watchFilter === 'all' }" @click="watchFilter = 'all'">
+              {{ t("common.all") }}
+            </button>
+            <button :class="{ active: watchFilter === 'put' }" @click="watchFilter = 'put'">PUT</button>
+            <button :class="{ active: watchFilter === 'delete' }" @click="watchFilter = 'delete'">DELETE</button>
+          </div>
+          <p class="hint">{{ t("keys.watchStatus") }}: {{ watchStatus }}</p>
+          <article
+            v-for="event in visibleWatchEvents"
+            :key="`${event.revision}-${event.key}-${event.event_type}`"
+            class="watch-event"
+          >
+            <header>
+              <strong>{{ event.event_type.toUpperCase() }}</strong>
+              <span>{{ t("keys.revision") }} {{ event.revision }}</span>
+            </header>
+            <p class="mono">{{ event.key }}</p>
+            <pre v-if="event.value" class="value-preview mono">{{ event.value }}</pre>
+          </article>
+        </section>
+      </div>
+      <div v-else class="detail-placeholder">{{ t("keys.selectKeyHint") }}</div>
+    </aside>
   </section>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import api from "../api";
 import { useAuthStore } from "../stores/auth";
@@ -115,12 +203,38 @@ interface ClusterInfo {
   name: string;
 }
 
+interface KvItem {
+  key: string;
+  value: string;
+  revision: number;
+  version: number;
+  create_revision: number;
+  mod_revision: number;
+  lease?: number | null;
+}
+
+type KeyDetailTab = "details" | "history" | "watch";
+
+interface KvHistoryResponse {
+  key: string;
+  compacted: boolean;
+  items: KvItem[];
+}
+
+interface WatchEventItem {
+  event_type: "put" | "delete" | "error";
+  key: string;
+  value?: string;
+  revision: number;
+  lease?: number;
+}
+
 const { t } = useI18n();
 const clusters = ref<ClusterInfo[]>([]);
 const clusterId = ref("");
 const prefix = ref("/services/");
 const keyword = ref("");
-const rows = ref<any[]>([]);
+const rows = ref<KvItem[]>([]);
 const editingKey = ref("");
 const editingValue = ref("");
 const errorMsg = ref("");
@@ -130,6 +244,20 @@ const loadingOne = ref(false);
 const saving = ref(false);
 const deleting = ref(false);
 const valueEditorRef = ref<InstanceType<typeof ValueEditor> | null>(null);
+const selectedKey = ref<KvItem | null>(null);
+const detailTab = ref<KeyDetailTab>("details");
+const history = ref<KvItem[]>([]);
+const historyCompacted = ref(false);
+const historyLoading = ref(false);
+const historyError = ref("");
+const revisionInput = ref("");
+const revisionItem = ref<KvItem | null>(null);
+const watchSource = ref<EventSource | null>(null);
+const watchEvents = ref<WatchEventItem[]>([]);
+const watchPrefix = ref("");
+const watchStatus = ref<"idle" | "running" | "paused" | "error">("idle");
+const watchFilter = ref<"all" | "put" | "delete">("all");
+const watchPaused = ref(false);
 
 const auth = useAuthStore();
 const canRead = computed(() => auth.permissions.includes("key:read"));
@@ -142,6 +270,11 @@ const filteredRows = computed(() => {
   return rows.value.filter(
     (row) => row.key.toLowerCase().includes(q) || String(row.value).toLowerCase().includes(q),
   );
+});
+
+const visibleWatchEvents = computed(() => {
+  if (watchFilter.value === "all") return watchEvents.value;
+  return watchEvents.value.filter((item) => item.event_type === watchFilter.value);
 });
 
 const shortKey = (key: string) => {
@@ -191,12 +324,25 @@ const queryKeys = async () => {
   try {
     rows.value =
       (await api.get(`/clusters/${clusterId.value}/kv`, { params: { prefix: prefix.value } })).data || [];
+    selectedKey.value = null;
+    history.value = [];
+    revisionItem.value = null;
   } catch (err: any) {
     rows.value = [];
     errorMsg.value = err.message || t("keys.queryFailed");
   } finally {
     loadingList.value = false;
   }
+};
+
+const selectKey = (row: KvItem) => {
+  selectedKey.value = row;
+  detailTab.value = "details";
+  revisionInput.value = String(row.revision);
+  revisionItem.value = null;
+  history.value = [];
+  historyCompacted.value = false;
+  historyError.value = "";
 };
 
 const loadOne = async (key: string) => {
@@ -209,6 +355,8 @@ const loadOne = async (key: string) => {
   try {
     const item = await api.get(`/clusters/${clusterId.value}/kv/item`, { params: { key } });
     if (item.data) {
+      selectedKey.value = item.data;
+      revisionInput.value = String(item.data.revision);
       const loadedKey = item.data.key || key;
       const isNewKey = editingKey.value !== loadedKey;
       editingKey.value = loadedKey;
@@ -231,6 +379,86 @@ const loadOne = async (key: string) => {
   } finally {
     loadingOne.value = false;
   }
+};
+
+const loadHistory = async () => {
+  if (!clusterId.value || !selectedKey.value) return;
+  historyLoading.value = true;
+  historyError.value = "";
+  try {
+    const resp = await api.get<KvHistoryResponse>(`/clusters/${clusterId.value}/kv/history`, {
+      params: { key: selectedKey.value.key, limit: 20 },
+    });
+    history.value = resp.data.items || [];
+    historyCompacted.value = resp.data.compacted;
+  } catch (err: any) {
+    historyError.value = err.message || t("keys.historyLoadFailed");
+  } finally {
+    historyLoading.value = false;
+  }
+};
+
+const loadRevision = async () => {
+  if (!clusterId.value || !selectedKey.value) return;
+  const revision = Number(revisionInput.value);
+  if (!Number.isFinite(revision) || revision <= 0) {
+    historyError.value = t("keys.invalidRevision");
+    return;
+  }
+  historyLoading.value = true;
+  historyError.value = "";
+  try {
+    const resp = await api.get<KvItem | null>(`/clusters/${clusterId.value}/kv/item`, {
+      params: { key: selectedKey.value.key, revision },
+    });
+    revisionItem.value = resp.data;
+  } catch (err: any) {
+    historyError.value = err.message || t("keys.historyLoadFailed");
+  } finally {
+    historyLoading.value = false;
+  }
+};
+
+const appendWatchEvent = (event: WatchEventItem) => {
+  if (watchPaused.value) return;
+  watchEvents.value = [event, ...watchEvents.value].slice(0, 500);
+};
+
+const startWatch = () => {
+  if (!clusterId.value) return;
+  stopWatch();
+  const prefixToWatch = watchPrefix.value.trim() || selectedKey.value?.key || prefix.value;
+  if (!prefixToWatch) return;
+  watchStatus.value = "running";
+  watchPaused.value = false;
+  const params = new URLSearchParams({ prefix: prefixToWatch });
+  const source = new EventSource(`/api/clusters/${clusterId.value}/kv/watch?${params.toString()}`);
+  source.addEventListener("put", (event) =>
+    appendWatchEvent(JSON.parse((event as MessageEvent).data)),
+  );
+  source.addEventListener("delete", (event) =>
+    appendWatchEvent(JSON.parse((event as MessageEvent).data)),
+  );
+  source.addEventListener("error", () => {
+    watchStatus.value = "error";
+  });
+  watchSource.value = source;
+};
+
+const stopWatch = () => {
+  watchSource.value?.close();
+  watchSource.value = null;
+  watchStatus.value = "idle";
+  watchPaused.value = false;
+};
+
+const toggleWatchPause = () => {
+  watchPaused.value = !watchPaused.value;
+  watchStatus.value = watchPaused.value ? "paused" : "running";
+};
+
+const clearWatchEvents = () => {
+  watchEvents.value = [];
 };
 
 const queryByKey = async () => {
@@ -305,10 +533,16 @@ const deleteItem = async () => {
 const clearForm = () => {
   editingKey.value = "";
   editingValue.value = "";
+  selectedKey.value = null;
+  history.value = [];
+  revisionItem.value = null;
   valueEditorRef.value?.resetMode();
 };
 
 onMounted(loadClusters);
+onUnmounted(() => {
+  stopWatch();
+});
 </script>
 
 <style scoped>
@@ -342,5 +576,122 @@ onMounted(loadClusters);
   color: var(--muted);
   line-height: 1.5;
   word-break: break-all;
+}
+
+.key-detail-panel {
+  margin-top: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.18);
+  padding: 16px;
+}
+
+.key-detail-content {
+  display: grid;
+  gap: 14px;
+}
+
+.key-detail-head h3 {
+  margin: 4px 0 0;
+  font-size: 15px;
+  word-break: break-all;
+}
+
+.detail-tabs {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  width: fit-content;
+}
+
+.detail-tabs button {
+  min-height: 32px;
+  padding: 5px 12px;
+  background: transparent;
+  color: var(--muted);
+}
+
+.detail-tabs button.active {
+  color: var(--primary);
+  background: var(--primary-dim);
+}
+
+.key-detail-section {
+  display: grid;
+  gap: 12px;
+}
+
+.revision-query {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.value-preview {
+  max-height: 240px;
+  overflow: auto;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--code-text);
+  background: rgba(0, 0, 0, 0.24);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.history-item {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.watch-controls,
+.watch-filters {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.watch-controls input {
+  min-width: min(280px, 100%);
+  flex: 1;
+}
+
+.watch-filters button.active {
+  color: var(--primary);
+  background: var(--primary-dim);
+}
+
+.watch-event {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.watch-event header {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.watch-event p {
+  margin: 0;
+  word-break: break-all;
+}
+
+.detail-placeholder {
+  color: var(--muted);
+  text-align: center;
+  padding: 20px;
 }
 </style>
