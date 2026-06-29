@@ -1,0 +1,18 @@
+[Unit]
+Description=EtcdPilot etcd management console
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=etcdpilot
+Group=etcdpilot
+WorkingDirectory=/usr/share/etcdpilot
+Environment=ETCD_MANAGER_CONFIG=/etc/etcdpilot/config.toml
+Environment=ETCD_MANAGER_SESSION_SECRET=change-me-before-production
+ExecStart=/usr/bin/etcdpilot
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

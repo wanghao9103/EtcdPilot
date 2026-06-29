@@ -12,6 +12,10 @@ backend/target/
 # Synced/embedded web build output
 backend/web/dist/
 
+# Local packaging output
+artifacts/
+build/
+
 # Local runtime data
 backend/data/
 *.db

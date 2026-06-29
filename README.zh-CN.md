@@ -7,6 +7,34 @@
 - 实时监听 key 或 prefix 变化。
 - Revision 历史依赖 etcd MVCC 保留策略，已经被 compact 的 revision 无法通过 EtcdPilot 读取。
 
+## 多端便携包
+
+本地构建便携包：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package.ps1 -Version dev -Runtime windows-x64
+```
+
+产物会输出到 `artifacts/`，包含后端可执行文件、`web/dist`、`config`、`data` 和启动脚本。
+
+推送 tag 后会通过 GitHub Actions 自动生成 Windows、Linux、macOS x64、macOS arm64 便携包：
+
+```bash
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+发布流程会生成：
+
+- Windows 便携 `.zip`
+- Windows 安装包 `.exe`
+- Linux 便携 `.tar.gz`
+- Linux RPM 包
+- macOS 便携 `.tar.gz`
+- macOS `.pkg` 安装包
+
+macOS `.pkg` 默认未签名。公开分发时建议增加 Developer ID 签名和 notarization 公证。
+
 EtcdPilot 是一个轻量级 etcd 管理控制台，用于通过 Web 界面浏览、编辑和审计 etcd 数据。项目后端使用 Rust Axum，前端使用 Vue 3 和 Vite，本地应用元数据使用 SQLite 存储。
 
 ## 功能特性

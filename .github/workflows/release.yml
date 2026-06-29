@@ -1,0 +1,118 @@
+name: Release Packages
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.runtime }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            runtime: windows-x64
+            archive: zip
+          - os: ubuntu-latest
+            runtime: linux-x64
+            archive: tar.gz
+          - os: macos-13
+            runtime: macos-x64
+            archive: tar.gz
+          - os: macos-14
+            runtime: macos-arm64
+            archive: tar.gz
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Go for Linux packaging
+        if: runner.os == 'Linux'
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: Install nfpm for RPM packaging
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Install Inno Setup for Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: choco install innosetup -y
+
+      - name: Build portable package
+        shell: pwsh
+        run: |
+          ./scripts/package.ps1 `
+            -Version "${{ github.ref_name }}" `
+            -Runtime "${{ matrix.runtime }}" `
+            -ArchiveFormat "${{ matrix.archive }}"
+
+      - name: Build Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          ./packaging/windows/build-installer.ps1 `
+            -Version "${{ github.ref_name }}" `
+            -Runtime "${{ matrix.runtime }}"
+
+      - name: Build Linux RPM
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          chmod +x packaging/linux/*.sh
+          packaging/linux/build-rpm.sh "${{ github.ref_name }}" "${{ matrix.runtime }}" amd64
+
+      - name: Build macOS pkg
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          chmod +x packaging/macos/build-pkg.sh
+          packaging/macos/build-pkg.sh "${{ github.ref_name }}" "${{ matrix.runtime }}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: EtcdPilot-${{ matrix.runtime }}
+          path: artifacts/*
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/*

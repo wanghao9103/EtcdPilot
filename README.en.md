@@ -123,6 +123,34 @@ docker compose up --build
 
 The container exposes port `8080` and mounts `config/config.prod.toml` into `/etc/etcdpilot/config.toml`.
 
+## Portable Release Packages
+
+Build a local portable package:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package.ps1 -Version dev -Runtime windows-x64
+```
+
+Release packages are written to `artifacts/`. Each package contains the backend binary, `web/dist`, `config`, `data`, and startup scripts.
+
+Create GitHub release packages by pushing a tag:
+
+```bash
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+The release workflow builds:
+
+- Windows portable `.zip`
+- Windows installer `.exe`
+- Linux portable `.tar.gz`
+- Linux RPM package
+- macOS portable `.tar.gz`
+- macOS `.pkg` installer
+
+The macOS `.pkg` is unsigned by default. Public macOS distribution should add Developer ID signing and notarization.
+
 ## Design Documents
 
 - [Chinese design document](docs/superpowers/specs/2026-06-22-etcdpilot-design-zh.md)
