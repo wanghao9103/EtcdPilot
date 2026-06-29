@@ -44,6 +44,9 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Set up protoc
+        uses: arduino/setup-protoc@v3
+
       - name: Set up Go for Linux packaging
         if: runner.os == 'Linux'
         uses: actions/setup-go@v5
