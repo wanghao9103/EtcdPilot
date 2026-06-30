@@ -14,15 +14,23 @@ if (-not (Test-Path $sourceDir)) {
 }
 
 $iscc = Get-Command iscc.exe -ErrorAction SilentlyContinue
+$isccPath = if ($iscc) { $iscc.Source } else { "" }
 if (-not $iscc) {
-    $candidate = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-    if (Test-Path $candidate) {
-        $iscc = Get-Item $candidate
+    $candidates = @(
+        "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+        "${env:ProgramFiles}\Inno Setup 6\ISCC.exe",
+        "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe"
+    )
+    foreach ($candidate in $candidates) {
+        if (Test-Path $candidate) {
+            $isccPath = (Get-Item $candidate).FullName
+            break
+        }
     }
 }
-if (-not $iscc) {
+if (-not $isccPath) {
     throw "Inno Setup compiler not found. Install Inno Setup 6 or ensure iscc.exe is on PATH."
 }
 
 New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
-& $iscc.Source "/DAppVersion=$Version" "/DSourceDir=$sourceDir" "/DOutputDir=$outputDir" $issPath
+& $isccPath "/DAppVersion=$Version" "/DSourceDir=$sourceDir" "/DOutputDir=$outputDir" $issPath
