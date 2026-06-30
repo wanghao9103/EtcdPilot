@@ -23,9 +23,6 @@ jobs:
           - os: ubuntu-latest
             runtime: linux-x64
             archive: tar.gz
-          - os: macos-13
-            runtime: macos-x64
-            archive: tar.gz
           - os: macos-14
             runtime: macos-arm64
             archive: tar.gz
