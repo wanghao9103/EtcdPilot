@@ -111,10 +111,57 @@ Copy-Item -Force (Join-Path $repoRoot "README.en.md") (Join-Path $stageDir "READ
 Copy-Item -Force (Join-Path $repoRoot "README.zh-CN.md") (Join-Path $stageDir "README.zh-CN.md")
 
 @"
+`$ErrorActionPreference = "Stop"
 `$env:ETCD_MANAGER_CONFIG = Join-Path `$PSScriptRoot "config/config.test.toml"
 `$env:ETCD_MANAGER_SESSION_SECRET = if (`$env:ETCD_MANAGER_SESSION_SECRET) { `$env:ETCD_MANAGER_SESSION_SECRET } else { "etcdpilot-local-session-secret" }
+`$env:RUST_LOG = if (`$env:RUST_LOG) { `$env:RUST_LOG } else { "info" }
 Set-Location `$PSScriptRoot
-./$binaryTarget
+
+`$url = "http://127.0.0.1:8080"
+Write-Host ""
+Write-Host "Starting EtcdPilot..."
+Write-Host "Config: `$env:ETCD_MANAGER_CONFIG"
+Write-Host "URL: `$url"
+Write-Host "Keep this window open while EtcdPilot is running."
+Write-Host ""
+
+try {
+    `$process = Start-Process -FilePath (Join-Path `$PSScriptRoot "$binaryTarget") -NoNewWindow -PassThru
+    `$opened = `$false
+
+    for (`$i = 0; `$i -lt 30; `$i++) {
+        if (`$process.HasExited) {
+            throw "EtcdPilot exited early with code `$(`$process.ExitCode)."
+        }
+
+        try {
+            `$response = Invoke-WebRequest -UseBasicParsing -Uri `$url -TimeoutSec 1
+            if (`$response.StatusCode -lt 500) {
+                Start-Process `$url
+                Write-Host "EtcdPilot is running: `$url"
+                `$opened = `$true
+                break
+            }
+        } catch {
+            Start-Sleep -Seconds 1
+        }
+    }
+
+    if (-not `$opened) {
+        Write-Host "EtcdPilot started, but the browser did not open automatically."
+        Write-Host "Open `$url manually after the server finishes starting."
+    }
+
+    Wait-Process -Id `$process.Id
+    exit `$process.ExitCode
+} catch {
+    Write-Host ""
+    Write-Host "Failed to start EtcdPilot:"
+    Write-Host `$_.Exception.Message
+    Write-Host ""
+    Read-Host "Press Enter to close"
+    exit 1
+}
 "@ | Set-Content -Encoding UTF8 (Join-Path $stageDir "start.ps1")
 
 @"
